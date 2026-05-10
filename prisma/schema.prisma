@@ -1,0 +1,246 @@
+// ─────────────────────────────────────────────────────────────
+// Scribe — Smart Logistics Hub Schema
+// ─────────────────────────────────────────────────────────────
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ENUMS
+// ═══════════════════════════════════════════════════════════════
+
+enum Role {
+  ADMIN
+  COURIER
+  MERCHANT
+}
+
+enum ParcelStatus {
+  PENDING
+  PICKED_UP
+  AT_HUB
+  OUT_FOR_DELIVERY
+  DELIVERED
+  FAILED
+  RETURNED_TO_ORIGIN
+}
+
+enum AccountType {
+  ASSET
+  LIABILITY
+  REVENUE
+  EXPENSE
+}
+
+enum AccountOwnerType {
+  COURIER
+  MERCHANT
+  SYSTEM
+}
+
+enum SettlementStatus {
+  PENDING
+  CONFIRMED
+  DISPUTED
+}
+
+// ═══════════════════════════════════════════════════════════════
+// USERS & MERCHANTS
+// ═══════════════════════════════════════════════════════════════
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  phone        String?
+  role         Role
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  merchant         Merchant?
+  assignedParcels  Parcel[]       @relation("CourierParcels")
+  accounts         Account[]
+  journalEntries   JournalEntry[]
+  settlements      Settlement[]   @relation("CourierSettlements")
+  adminSettlements Settlement[]   @relation("AdminSettlements")
+  auditLogs        AuditLog[]
+
+  @@index([role])
+  @@index([email])
+}
+
+model Merchant {
+  id              String   @id @default(uuid())
+  userId          String   @unique
+  businessName    String
+  address         String?
+  phone           String?
+  flatDeliveryFee Decimal  @default(25.00) @db.Decimal(12, 2)
+  isActive        Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  user           User            @relation(fields: [userId], references: [id])
+  parcels        Parcel[]
+  inventoryItems InventoryItem[]
+
+  @@index([userId])
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PARCELS
+// ═══════════════════════════════════════════════════════════════
+
+model Parcel {
+  id               String       @id @default(uuid())
+  trackingId       String       @unique
+  merchantId       String
+  courierId        String?
+  status           ParcelStatus @default(PENDING)
+  codAmount        Decimal      @db.Decimal(12, 2)
+  weight           Decimal?     @db.Decimal(8, 2)
+  recipientName    String
+  recipientPhone   String
+  recipientAddress String
+  notes            String?
+  deliveredAt      DateTime?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  // Relations
+  merchant Merchant @relation(fields: [merchantId], references: [id])
+  courier  User?    @relation("CourierParcels", fields: [courierId], references: [id])
+
+  @@index([trackingId])
+  @@index([status])
+  @@index([merchantId])
+  @@index([courierId])
+}
+
+// ═══════════════════════════════════════════════════════════════
+// DOUBLE-ENTRY LEDGER
+// ═══════════════════════════════════════════════════════════════
+
+model Account {
+  id        String           @id @default(uuid())
+  ownerId   String
+  ownerType AccountOwnerType
+  type      AccountType
+  name      String
+  balance   Decimal          @default(0) @db.Decimal(12, 2)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  // Relations
+  owner User          @relation(fields: [ownerId], references: [id])
+  lines JournalLine[]
+
+  @@unique([ownerId, ownerType, type])
+  @@index([ownerId])
+  @@index([ownerType])
+}
+
+model JournalEntry {
+  id          String   @id @default(uuid())
+  description String
+  createdById String
+  createdAt   DateTime @default(now())
+
+  // Relations
+  createdBy User          @relation(fields: [createdById], references: [id])
+  lines     JournalLine[]
+
+  @@index([createdAt])
+}
+
+model JournalLine {
+  id        String  @id @default(uuid())
+  entryId   String
+  accountId String
+  amount    Decimal @db.Decimal(12, 2) // Positive = debit, Negative = credit
+
+  // Relations
+  entry   JournalEntry @relation(fields: [entryId], references: [id])
+  account Account      @relation(fields: [accountId], references: [id])
+
+  @@index([entryId])
+  @@index([accountId])
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SETTLEMENT (Armant Protocol)
+// ═══════════════════════════════════════════════════════════════
+
+model Settlement {
+  id          String           @id @default(uuid())
+  courierId   String
+  adminId     String?
+  amount      Decimal          @db.Decimal(12, 2)
+  status      SettlementStatus @default(PENDING)
+  notes       String?
+  confirmedAt DateTime?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  // Relations
+  courier User  @relation("CourierSettlements", fields: [courierId], references: [id])
+  admin   User? @relation("AdminSettlements", fields: [adminId], references: [id])
+
+  @@index([courierId])
+  @@index([status])
+}
+
+// ═══════════════════════════════════════════════════════════════
+// MERCHANT INVENTORY
+// ═══════════════════════════════════════════════════════════════
+
+model InventoryItem {
+  id          String   @id @default(uuid())
+  merchantId  String
+  sku         String
+  name        String
+  quantity    Int      @default(0)
+  unitValue   Decimal  @default(0.00) @db.Decimal(12, 2)
+  unitWeight  Decimal? @db.Decimal(8, 2) // Weight per unit
+  location    String?  // Physical location in hub warehouse
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  merchant Merchant @relation(fields: [merchantId], references: [id])
+
+  @@unique([merchantId, sku])
+  @@index([merchantId])
+}
+
+// ═══════════════════════════════════════════════════════════════
+// AUDIT LOG (Immutable)
+// ═══════════════════════════════════════════════════════════════
+
+model AuditLog {
+  id            String   @id @default(uuid())
+  userId        String
+  entity        String // e.g. "Parcel", "Account", "Settlement"
+  entityId      String
+  action        String // e.g. "STATUS_CHANGE", "BALANCE_CHANGE"
+  previousValue Json? // Snapshot before change
+  newValue      Json? // Snapshot after change
+  timestamp     DateTime @default(now())
+
+  // Relations
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([entity, entityId])
+  @@index([userId])
+  @@index([timestamp])
+}
