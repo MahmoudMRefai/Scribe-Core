@@ -2,18 +2,41 @@
  * Integration Tests — Settlement API
  *
  * Tests the Armant Settlement Protocol through the HTTP API.
- *
- * IMPORTANT: These tests require a running PostgreSQL test database.
  */
 import request from 'supertest';
 import { app } from '../../src/app';
+import { prisma } from '../../src/config/prisma';
 import { generateTestToken } from '../helpers';
 
 const SKIP = !process.env.DATABASE_URL_TEST;
 
 (SKIP ? describe.skip : describe)('Settlement API Integration', () => {
-  const adminToken = generateTestToken('admin-test-id', 'ADMIN');
-  const courierToken = generateTestToken('courier-test-id', 'COURIER');
+  const adminId = 'admin-settle-test';
+  const courierId = 'courier-settle-test';
+  const merchantId = 'merchant-settle-test';
+  
+  const adminToken = generateTestToken(adminId, 'ADMIN');
+  const courierToken = generateTestToken(courierId, 'COURIER');
+  const merchantToken = generateTestToken(merchantId, 'MERCHANT');
+
+  beforeAll(async () => {
+    // Create users in test DB
+    await prisma.user.upsert({
+      where: { id: adminId },
+      update: {},
+      create: { id: adminId, email: 'admin-s@test.local', passwordHash: 'h', name: 'A', role: 'ADMIN' }
+    });
+    await prisma.user.upsert({
+      where: { id: courierId },
+      update: {},
+      create: { id: courierId, email: 'courier-s@test.local', passwordHash: 'h', name: 'C', role: 'COURIER' }
+    });
+    await prisma.user.upsert({
+      where: { id: merchantId },
+      update: {},
+      create: { id: merchantId, email: 'merchant-s@test.local', passwordHash: 'h', name: 'M', role: 'MERCHANT' }
+    });
+  });
 
   describe('POST /api/settlements', () => {
     it('should return 401 without auth token', async () => {
@@ -28,7 +51,6 @@ const SKIP = !process.env.DATABASE_URL_TEST;
     });
 
     it('should return 403 for MERCHANT role', async () => {
-      const merchantToken = generateTestToken('merchant-test-id', 'MERCHANT');
       const res = await request(app)
         .post('/api/settlements')
         .set('Authorization', `Bearer ${merchantToken}`)

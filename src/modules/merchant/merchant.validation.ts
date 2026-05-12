@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 export const createMerchantSchema = z.object({
-  email: z.string().email(),
+  email: z.email(),
   password: z.string().min(8),
   name: z.string().min(2),
   phone: z.string().optional(),
@@ -15,4 +15,5 @@ export const updateMerchantSchema = z.object({
   businessAddress: z.string().optional(),
   flatDeliveryFee: z.number().min(0).optional(),
   phone: z.string().optional(),
+  isActive: z.boolean().optional(),
 });

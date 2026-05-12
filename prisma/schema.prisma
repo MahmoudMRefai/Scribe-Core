@@ -67,6 +67,7 @@ model User {
 
   // Relations
   merchant         Merchant?
+  courier          Courier?
   assignedParcels  Parcel[]       @relation("CourierParcels")
   accounts         Account[]
   journalEntries   JournalEntry[]
@@ -93,6 +94,31 @@ model Merchant {
   user           User            @relation(fields: [userId], references: [id])
   parcels        Parcel[]
   inventoryItems InventoryItem[]
+
+  @@index([userId])
+}
+
+enum VehicleType {
+  MOTORCYCLE
+  CAR
+  BIKE
+  VAN
+  OTHER
+}
+
+model Courier {
+  id              String       @id @default(uuid())
+  userId          String       @unique
+  isActive        Boolean      @default(true)
+  phone           String?
+  vehicleType     VehicleType? @default(MOTORCYCLE)
+  address         String?
+  currentLocation String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  // Relations
+  user User @relation(fields: [userId], references: [id])
 
   @@index([userId])
 }

@@ -11,6 +11,7 @@ export {
   AccountType,
   AccountOwnerType,
   SettlementStatus,
+  VehicleType,
 } from '@prisma/client';
 
 /**

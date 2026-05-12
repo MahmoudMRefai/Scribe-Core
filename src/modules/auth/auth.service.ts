@@ -32,6 +32,8 @@ interface RegisterInput {
   role: Role;
   businessName?: string;
   businessAddress?: string;
+  vehicleType?: string;
+  address?: string;
 }
 
 interface AuthResult {
@@ -75,6 +77,18 @@ export class AuthService {
             address: input.businessAddress,
             phone: input.phone,
             flatDeliveryFee: env.FLAT_DELIVERY_FEE,
+          },
+        });
+      }
+
+      // Create Courier record if role is COURIER
+      if (input.role === Role.COURIER) {
+        await tx.courier.create({
+          data: {
+            userId: newUser.id,
+            phone: input.phone,
+            vehicleType: input.vehicleType,
+            address: input.address,
           },
         });
       }

@@ -18,7 +18,7 @@ export class MerchantService {
     return MerchantRepository.findMany(page, pageSize);
   }
 
-  static async update(id: string, data: { businessName?: string; businessAddress?: string; flatDeliveryFee?: number; phone?: string }) {
+  static async update(id: string, data: { businessName?: string; businessAddress?: string; flatDeliveryFee?: number; phone?: string; isActive?: boolean }) {
     const merchant = await MerchantRepository.findById(id);
     if (!merchant) throw new NotFoundException('Merchant', id);
     return MerchantRepository.update(id, data);

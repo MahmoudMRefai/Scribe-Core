@@ -2,23 +2,34 @@
  * Integration Tests — Parcel API
  *
  * Tests the full parcel lifecycle through the HTTP API using Supertest.
- *
- * IMPORTANT: These tests require a running PostgreSQL test database.
- * Run: docker-compose up -d postgres_test
- * Set: DATABASE_URL to the test database URL before running.
- *
- * For CI, these would run against a test container. For local dev,
- * run the unit tests first (npm run test:unit) — they don't need a DB.
  */
 import request from 'supertest';
 import { app } from '../../src/app';
+import { prisma } from '../../src/config/prisma';
 import { generateTestToken } from '../helpers';
 
 // Skip integration tests if no test DB is configured
 const SKIP = !process.env.DATABASE_URL_TEST;
 
 (SKIP ? describe.skip : describe)('Parcel API Integration', () => {
-  const adminToken = generateTestToken('admin-test-id', 'ADMIN');
+  const adminId = 'admin-test-id';
+  const adminToken = generateTestToken(adminId, 'ADMIN');
+
+  beforeAll(async () => {
+    // Ensure the test user exists in the DB so the auth middleware passes
+    await prisma.user.upsert({
+      where: { id: adminId },
+      update: {},
+      create: {
+        id: adminId,
+        email: 'admin-test@scribe.local',
+        passwordHash: 'mock-hash',
+        name: 'Admin Test',
+        role: 'ADMIN',
+        isActive: true
+      }
+    });
+  });
 
   describe('POST /api/parcels', () => {
     it('should return 401 without auth token', async () => {
