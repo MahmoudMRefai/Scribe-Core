@@ -40,7 +40,7 @@ export class SettlementService {
    */
   static async initiate(courierId: string, amount: number, userId: string, notes?: string) {
     // Verify courier has an account with sufficient balance
-    const courierAccount = await prisma.account.findFirst({
+    const courierAccount = await prisma.ledgerAccount.findFirst({
       where: { ownerId: courierId, ownerType: AccountOwnerType.COURIER, type: AccountType.ASSET },
     });
     if (!courierAccount) {
@@ -104,7 +104,7 @@ export class SettlementService {
       const amount = new Decimal(settlement.amount.toString());
 
       // ─── Find accounts ───────────────────────────────────
-      const courierAccount = await tx.account.findFirst({
+      const courierAccount = await tx.ledgerAccount.findFirst({
         where: {
           ownerId: settlement.courierId,
           ownerType: AccountOwnerType.COURIER,
@@ -126,13 +126,13 @@ export class SettlementService {
       }
 
       // System cash account (ASSET — physical cash at hub)
-      let systemCashAccount = await tx.account.findFirst({
+      let systemCashAccount = await tx.ledgerAccount.findFirst({
         where: { ownerType: AccountOwnerType.SYSTEM, type: AccountType.ASSET },
       });
       if (!systemCashAccount) {
         const admin = await tx.user.findFirst({ where: { role: 'ADMIN' } });
         if (!admin) throw new NotFoundException('System admin');
-        systemCashAccount = await tx.account.create({
+        systemCashAccount = await tx.ledgerAccount.create({
           data: {
             ownerId: admin.id,
             ownerType: AccountOwnerType.SYSTEM,
@@ -161,12 +161,12 @@ export class SettlementService {
       // ─── Update balances ─────────────────────────────────
       const oldCourierBalance = courierBalance;
 
-      await tx.account.update({
+      await tx.ledgerAccount.update({
         where: { id: courierAccount.id },
         data: { balance: { decrement: amount.toNumber() } },
       });
 
-      await tx.account.update({
+      await tx.ledgerAccount.update({
         where: { id: systemCashAccount.id },
         data: { balance: { increment: amount.toNumber() } },
       });
@@ -191,7 +191,7 @@ export class SettlementService {
 
       await AuditService.log({
         userId: adminId,
-        entity: 'Account',
+        entity: 'LedgerAccount',
         entityId: courierAccount.id,
         action: AuditAction.BALANCE_CHANGE,
         previousValue: { balance: oldCourierBalance.toFixed(2) },

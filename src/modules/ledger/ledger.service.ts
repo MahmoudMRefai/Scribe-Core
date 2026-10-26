@@ -46,7 +46,7 @@ export class LedgerService {
     if (codAmount.isZero()) return;
 
     // ─── Find accounts ───────────────────────────────────────
-    const courierAccount = await tx.account.findFirst({
+    const courierAccount = await tx.ledgerAccount.findFirst({
       where: { ownerId: parcel.courierId!, ownerType: AccountOwnerType.COURIER, type: AccountType.ASSET },
     });
     if (!courierAccount) {
@@ -58,7 +58,7 @@ export class LedgerService {
       where: { id: parcel.merchantId },
     });
 
-    const merchantAccount = await tx.account.findFirst({
+    const merchantAccount = await tx.ledgerAccount.findFirst({
       where: { ownerId: merchant.userId, ownerType: AccountOwnerType.MERCHANT, type: AccountType.ASSET },
     });
     if (!merchantAccount) {
@@ -66,14 +66,14 @@ export class LedgerService {
     }
 
     // System revenue account — create if not exists (singleton)
-    let systemAccount = await tx.account.findFirst({
+    let systemAccount = await tx.ledgerAccount.findFirst({
       where: { ownerType: AccountOwnerType.SYSTEM, type: AccountType.REVENUE },
     });
     if (!systemAccount) {
       // Find an admin user to own the system account
       const admin = await tx.user.findFirst({ where: { role: 'ADMIN' } });
       if (!admin) throw new NotFoundException('System admin for revenue account');
-      systemAccount = await tx.account.create({
+      systemAccount = await tx.ledgerAccount.create({
         data: {
           ownerId: admin.id,
           ownerType: AccountOwnerType.SYSTEM,
@@ -111,17 +111,17 @@ export class LedgerService {
     const courierOldBalance = new Decimal(courierAccount.balance.toString());
     const merchantOldBalance = new Decimal(merchantAccount.balance.toString());
 
-    await tx.account.update({
+    await tx.ledgerAccount.update({
       where: { id: courierAccount.id },
       data: { balance: { increment: codAmount.toNumber() } },
     });
 
-    await tx.account.update({
+    await tx.ledgerAccount.update({
       where: { id: merchantAccount.id },
       data: { balance: { increment: codAmount.minus(flatFee).toNumber() } }, // net = cod - fee
     });
 
-    await tx.account.update({
+    await tx.ledgerAccount.update({
       where: { id: systemAccount.id },
       data: { balance: { increment: flatFee.toNumber() } },
     });
@@ -129,7 +129,7 @@ export class LedgerService {
     // ─── Audit logs ──────────────────────────────────────────
     await AuditService.log({
       userId,
-      entity: 'Account',
+      entity: 'LedgerAccount',
       entityId: courierAccount.id,
       action: AuditAction.BALANCE_CHANGE,
       previousValue: { balance: courierOldBalance.toFixed(2) },
@@ -138,7 +138,7 @@ export class LedgerService {
 
     await AuditService.log({
       userId,
-      entity: 'Account',
+      entity: 'LedgerAccount',
       entityId: merchantAccount.id,
       action: AuditAction.BALANCE_CHANGE,
       previousValue: { balance: merchantOldBalance.toFixed(2) },

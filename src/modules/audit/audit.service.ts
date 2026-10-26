@@ -9,7 +9,7 @@ import { prisma as defaultPrisma } from '../../config/prisma.js';
 
 export interface AuditLogInput {
   userId: string;
-  entity: string;       // e.g., 'Parcel', 'Account', 'Settlement'
+  entity: string;       // e.g., 'Parcel', 'LedgerAccount', 'Settlement'
   entityId: string;
   action: string;       // AuditAction enum value
   previousValue?: unknown;

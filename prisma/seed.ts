@@ -17,45 +17,52 @@ async function main() {
 
   console.log('🌱 Seeding database...');
 
-  // Check if admin already exists
   const existing = await prisma.user.findUnique({ where: { email: adminEmail } });
+  let admin;
   if (existing) {
     console.log(`✅ Admin user already exists: ${adminEmail}`);
-    return;
+    admin = existing;
+  } else {
+    const passwordHash = await bcrypt.hash(adminPassword, 12);
+    admin = await prisma.user.create({
+      data: {
+        email: adminEmail,
+        passwordHash,
+        name: 'Scribe Admin',
+        role: 'ADMIN',
+        phone: '+20-100-000-0000',
+      },
+    });
+    console.log(`✅ Admin user created: ${adminEmail}`);
   }
 
-  const passwordHash = await bcrypt.hash(adminPassword, 12);
-
-  const admin = await prisma.user.create({
-    data: {
-      email: adminEmail,
-      passwordHash,
-      name: 'Scribe Admin',
-      role: 'ADMIN',
-      phone: '+20-100-000-0000',
-    },
-  });
-
   // Create system accounts owned by admin
-  await prisma.account.createMany({
-    data: [
-      {
-        ownerId: admin.id,
-        ownerType: 'SYSTEM',
-        type: 'REVENUE',
-        name: 'System Revenue',
-      },
-      {
-        ownerId: admin.id,
-        ownerType: 'SYSTEM',
-        type: 'ASSET',
-        name: 'System Cash',
-      },
-    ],
+  const existingAccounts = await prisma.ledgerAccount.findMany({
+    where: { ownerId: admin.id, ownerType: 'SYSTEM' }
   });
 
-  console.log(`✅ Admin user created: ${adminEmail}`);
-  console.log(`✅ System accounts created (Revenue + Cash)`);
+  if (existingAccounts.length === 0) {
+    await prisma.ledgerAccount.createMany({
+      data: [
+        {
+          ownerId: admin.id,
+          ownerType: 'SYSTEM',
+          type: 'REVENUE',
+          name: 'System Revenue',
+        },
+        {
+          ownerId: admin.id,
+          ownerType: 'SYSTEM',
+          type: 'ASSET',
+          name: 'System Cash',
+        },
+      ],
+    });
+    console.log(`✅ System accounts created (Revenue + Cash)`);
+  } else {
+    console.log(`✅ System accounts already exist`);
+  }
+
   console.log('🌱 Seed complete!');
 }
 

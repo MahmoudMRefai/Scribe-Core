@@ -3,22 +3,22 @@ import { prisma } from '../../config/prisma.js';
 
 export class WalletRepository {
   static async findByOwnerId(ownerId: string) {
-    return prisma.account.findMany({ where: { ownerId } });
+    return prisma.ledgerAccount.findMany({ where: { ownerId } });
   }
 
   static async findById(id: string) {
-    return prisma.account.findUnique({ where: { id } });
+    return prisma.ledgerAccount.findUnique({ where: { id } });
   }
 
   static async findMany(filters: {
     ownerId?: string;
     ownerType?: string;
   }) {
-    const where: Prisma.AccountWhereInput = {
+    const where: Prisma.LedgerAccountWhereInput = {
       ...(filters.ownerId && { ownerId: filters.ownerId }),
       ...(filters.ownerType && { ownerType: filters.ownerType as any }),
     };
-    return prisma.account.findMany({
+    return prisma.ledgerAccount.findMany({
       where,
       include: { owner: { select: { id: true, name: true, email: true, role: true } } },
     });

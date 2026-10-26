@@ -59,7 +59,7 @@ model User {
   email        String   @unique
   passwordHash String
   name         String
-  phone        String?
+  phone        String?  @unique
   role         Role
   isActive     Boolean  @default(true)
   createdAt    DateTime @default(now())
@@ -69,7 +69,7 @@ model User {
   merchant         Merchant?
   courier          Courier?
   assignedParcels  Parcel[]       @relation("CourierParcels")
-  accounts         Account[]
+  ledgerAccounts   LedgerAccount[]
   journalEntries   JournalEntry[]
   settlements      Settlement[]   @relation("CourierSettlements")
   adminSettlements Settlement[]   @relation("AdminSettlements")
@@ -157,7 +157,7 @@ model Parcel {
 // DOUBLE-ENTRY LEDGER
 // ═══════════════════════════════════════════════════════════════
 
-model Account {
+model LedgerAccount {
   id        String           @id @default(uuid())
   ownerId   String
   ownerType AccountOwnerType
@@ -196,8 +196,8 @@ model JournalLine {
   amount    Decimal @db.Decimal(12, 2) // Positive = debit, Negative = credit
 
   // Relations
-  entry   JournalEntry @relation(fields: [entryId], references: [id])
-  account Account      @relation(fields: [accountId], references: [id])
+  entry   JournalEntry  @relation(fields: [entryId], references: [id])
+  account LedgerAccount @relation(fields: [accountId], references: [id])
 
   @@index([entryId])
   @@index([accountId])
@@ -256,7 +256,7 @@ model InventoryItem {
 model AuditLog {
   id            String   @id @default(uuid())
   userId        String
-  entity        String // e.g. "Parcel", "Account", "Settlement"
+  entity        String // e.g. "Parcel", "LedgerAccount", "Settlement"
   entityId      String
   action        String // e.g. "STATUS_CHANGE", "BALANCE_CHANGE"
   previousValue Json? // Snapshot before change

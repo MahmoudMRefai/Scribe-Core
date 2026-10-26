@@ -16,8 +16,11 @@ export class AuthController {
 
   static async login(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const { email, password } = loginSchema.parse(req.body);
-      const result = await AuthService.login(email, password);
+      const { email, phone, password } = loginSchema.parse(req.body);
+      const result = await AuthService.login(
+        { email: email || undefined, phone: phone || undefined },
+        password,
+      );
       res.status(200).json(ApiResponse.success(result));
     } catch (err) {
       next(err);
