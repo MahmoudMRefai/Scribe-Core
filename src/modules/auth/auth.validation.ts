@@ -1,12 +1,18 @@
 import { z } from 'zod';
 import { Role, VehicleType } from '../../shared/enums.js';
+import { isValidEgyptianMobile } from '../../shared/phone.util.js';
 
 export const registerSchema = z.object({
   email: z.email('Invalid email address'),
   password: z.string().min(8, 'Password must be at least 8 characters'),
   name: z.string().min(2, 'Name must be at least 2 characters'),
-  phone: z.string().length(11, 'Phone number must be 11 digits'),
-  role: z.nativeEnum(Role),
+  phone: z
+    .string()
+    .refine(isValidEgyptianMobile, 'Invalid Egyptian mobile number (e.g. 01012345678 or +201012345678)'),
+  // Public registration is limited to couriers and merchants. Admins are created via the seed script.
+  role: z
+    .nativeEnum(Role)
+    .refine((role) => role !== Role.ADMIN, 'Admin accounts cannot be self-registered'),
   // Merchant-specific fields
   businessName: z.string().optional(),
   businessAddress: z.string().optional(),

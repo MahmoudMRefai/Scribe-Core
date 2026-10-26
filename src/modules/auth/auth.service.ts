@@ -23,6 +23,7 @@ import {
   ConflictException,
   UnauthorizedException,
 } from '../../shared/errors.js';
+import { normalizePhone } from '../../shared/phone.util.js';
 
 interface RegisterInput {
   email: string;
@@ -85,7 +86,7 @@ export class AuthService {
             userId: newUser.id,
             businessName: input.businessName || input.name,
             address: input.businessAddress,
-            phone: input.phone,
+            phone: input.phone ? AuthService.normalizePhone(input.phone) : undefined,
             flatDeliveryFee: env.FLAT_DELIVERY_FEE,
           },
         });
@@ -96,7 +97,7 @@ export class AuthService {
         await tx.courier.create({
           data: {
             userId: newUser.id,
-            phone: input.phone,
+            phone: input.phone ? AuthService.normalizePhone(input.phone) : undefined,
             vehicleType: input.vehicleType,
             address: input.address,
           },
@@ -184,20 +185,7 @@ export class AuthService {
   }
   
   private static normalizePhone(phone: string): string {
-    // Remove all non-digit characters except +
-    const cleaned = phone.replace(/[^\d+]/g, '');
-    
-    // If it's a standard Egyptian number (e.g., 010..., 011...) and has 11 digits
-    if (cleaned.startsWith('0') && cleaned.length === 11) {
-      return '+20' + cleaned.substring(1);
-    }
-    
-    // If it starts with 20... (country code without +)
-    if (cleaned.startsWith('20') && cleaned.length === 12) {
-      return '+' + cleaned;
-    }
-    
-    return cleaned;
+    return normalizePhone(phone);
   }
 
   private static signToken(userId: string, role: Role): string {
