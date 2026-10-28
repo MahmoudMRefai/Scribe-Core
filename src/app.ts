@@ -19,6 +19,7 @@ import { merchantRoutes } from './modules/merchant/merchant.routes.js';
 import { inventoryRoutes } from './modules/inventory/inventory.routes.js';
 import { auditRoutes } from './modules/audit/audit.routes.js';
 import { courierRoutes } from './modules/courier/courier.routes.js';
+import { payoutRoutes } from './modules/payout/payout.routes.js';
 
 const app = express();
 
@@ -41,6 +42,9 @@ app.use('/api/merchants', merchantRoutes);
 app.use('/api/inventory', inventoryRoutes);
 app.use('/api/audit', auditRoutes);
 app.use('/api/couriers', courierRoutes);
+app.use('/api/v1/courier', courierRoutes);
+app.use('/api/v1/couriers', courierRoutes);
+app.use('/api/payouts', payoutRoutes);
 
 // ─── 404 Handler ────────────────────────────────────────────
 app.use((_req, res) => {

@@ -22,12 +22,13 @@ export class ParcelController {
 
   static async updateStatus(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const { status } = updateParcelStatusSchema.parse(req.body);
+      const { status, deliveryNote } = updateParcelStatusSchema.parse(req.body);
       const parcel = await ParcelService.updateStatus(
         req.params.id as string,
         status as ParcelStatus,
         req.user!.id,
         req.user!.role,
+        { note: deliveryNote },
       );
       res.status(200).json(ApiResponse.success(parcel));
     } catch (err) {

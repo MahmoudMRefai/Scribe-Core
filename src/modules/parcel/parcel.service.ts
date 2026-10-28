@@ -19,13 +19,21 @@
  *   - Invalid status transition (e.g., PENDING→DELIVERED) → ConflictException
  *   - Parcel not found → NotFoundException
  *   - Merchant not found or inactive → NotFoundException
+ *
+ * ─── Mark As Delivered (atomic settlement) ────────────────────
+ *   One DB transaction: CAS parcel status → wallet (commission + cash-in-hand)
+ *   → double-entry ledger → audit. Any failure rolls back everything.
+ *   - Concurrent / repeated delivery → ConflictException (only one CAS wins)
  */
-import { ParcelStatus, Role } from '@prisma/client';
+import Decimal from 'decimal.js';
+import { Parcel, ParcelStatus, Role, ServiceTier } from '@prisma/client';
 import { prisma } from '../../config/prisma.js';
 import { VALID_STATUS_TRANSITIONS } from '../../config/constants.js';
 import { ParcelRepository } from './parcel.repository.js';
 import { BarcodeUtil } from './barcode.util.js';
 import { LedgerService } from '../ledger/ledger.service.js';
+import { CommissionService } from '../commission/commission.service.js';
+import { CourierWalletService } from '../courier-wallet/courier-wallet.service.js';
 import { AuditService } from '../audit/audit.service.js';
 import { AuditAction } from '../../shared/enums.js';
 import {
@@ -37,11 +45,19 @@ import {
 interface CreateParcelInput {
   merchantId: string;
   codAmount: number;
+  serviceTier?: ServiceTier;
   weight?: number;
   recipientName: string;
   recipientPhone: string;
   recipientAddress: string;
   notes?: string;
+}
+
+export interface DeliveryMetadata {
+  /** User performing the action (courier themself, or an admin). Defaults to the courier. */
+  performedBy?: string;
+  /** Free-text note from the courier, stored in the audit trail. */
+  note?: string;
 }
 
 export class ParcelService {
@@ -55,6 +71,14 @@ export class ParcelService {
       throw new NotFoundException('Merchant', input.merchantId);
     }
 
+    const codAmount = new Decimal(input.codAmount);
+    const deliveryFee = new Decimal(merchant.flatDeliveryFee.toString());
+    if (codAmount.lessThan(deliveryFee)) {
+      throw new ConflictException(
+        `Parcel COD amount (${codAmount.toFixed(2)} EGP) cannot be less than the delivery fee (${deliveryFee.toFixed(2)} EGP)`,
+      );
+    }
+
     // Atomic: generate tracking ID + create parcel
     const parcel = await prisma.$transaction(async (tx) => {
       const trackingId = await BarcodeUtil.generate(tx);
@@ -64,6 +88,7 @@ export class ParcelService {
           trackingId,
           merchant: { connect: { id: input.merchantId } },
           codAmount: input.codAmount,
+          serviceTier: input.serviceTier ?? ServiceTier.LOCAL,
           weight: input.weight,
           recipientName: input.recipientName,
           recipientPhone: input.recipientPhone,
@@ -79,7 +104,12 @@ export class ParcelService {
         entity: 'Parcel',
         entityId: created.id,
         action: AuditAction.CREATE,
-        newValue: { trackingId, status: ParcelStatus.PENDING, codAmount: input.codAmount },
+        newValue: {
+          trackingId,
+          status: ParcelStatus.PENDING,
+          codAmount: input.codAmount,
+          serviceTier: input.serviceTier ?? ServiceTier.LOCAL,
+        },
       }, tx);
 
       return created;
@@ -96,6 +126,7 @@ export class ParcelService {
     newStatus: ParcelStatus,
     userId: string,
     userRole: Role,
+    metadata: Omit<DeliveryMetadata, 'performedBy'> = {},
   ) {
     const parcel = await ParcelRepository.findById(parcelId);
     if (!parcel) {
@@ -119,9 +150,13 @@ export class ParcelService {
       );
     }
 
-    // ─── Handle DELIVERED → trigger financial recording ────────
+    // ─── Handle DELIVERED → atomic financial settlement ────────
     if (newStatus === ParcelStatus.DELIVERED) {
-      return this.handleDelivery(parcel.id, userId);
+      const courierId = userRole === Role.COURIER ? userId : parcel.courierId;
+      if (!courierId) {
+        throw new ConflictException('Cannot deliver a parcel with no assigned courier');
+      }
+      return this.markAsDelivered(parcel.id, courierId, { ...metadata, performedBy: userId });
     }
 
     // ─── Standard status update ────────────────────────────────
@@ -166,13 +201,18 @@ export class ParcelService {
       throw new NotFoundException('Courier', courierId);
     }
 
+    // Lock the commission rate now so later rate-card changes don't alter it.
+    const courierCommission = this.calculateCommission(parcel);
+
     const updated = await prisma.$transaction(async (tx) => {
-      const result = await ParcelRepository.updateStatus(
-        parcelId,
-        ParcelStatus.PICKED_UP,
-        { courierId },
-        tx,
-      );
+      const result = await tx.parcel.update({
+        where: { id: parcelId },
+        data: {
+          status: ParcelStatus.PICKED_UP,
+          courierId,
+          courierCommission: courierCommission.toFixed(2),
+        },
+      });
 
       await AuditService.log({
         userId: adminId,
@@ -180,7 +220,13 @@ export class ParcelService {
         entityId: parcelId,
         action: AuditAction.COURIER_ASSIGNED,
         previousValue: { status: ParcelStatus.PENDING, courierId: null },
-        newValue: { status: ParcelStatus.PICKED_UP, courierId },
+        newValue: {
+          status: ParcelStatus.PICKED_UP,
+          courierId,
+          serviceTier: parcel.serviceTier,
+          courierCommission: courierCommission.toFixed(2),
+          commissionStrategy: CommissionService.getStrategy().name,
+        },
       }, tx);
 
       return result;
@@ -190,36 +236,89 @@ export class ParcelService {
   }
 
   /**
-   * Handle DELIVERED status — updates parcel AND records financial entries.
-   * All within a single Prisma interactive transaction for ACID compliance.
+   * Mark a parcel DELIVERED and settle the courier's position atomically:
+   *   1. Verify the courier is assigned
+   *   2. Compare-and-set status OUT_FOR_DELIVERY → DELIVERED (row-locked)
+   *   3. Wallet: +commission (COMMISSION_EARNED), +COD cash-in-hand (CASH_COLLECTED)
+   *   4. Ledger: COD/fee journal + commission journal
+   *   5. Audit trail
+   *
+   * Step 2 is what makes this safe under concurrency: in READ COMMITTED,
+   * a second concurrent UPDATE blocks on the row lock, re-evaluates the WHERE
+   * after the first commits, matches 0 rows, and we abort with a 409.
+   * The unique (walletId, type, referenceId) index is a second, DB-level guard.
    */
-  private static async handleDelivery(parcelId: string, userId: string) {
-    return prisma.$transaction(async (tx) => {
-      const parcel = await tx.parcel.findUniqueOrThrow({ where: { id: parcelId } });
-      const previousStatus = parcel.status;
+  static async markAsDelivered(parcelId: string, courierId: string, metadata: DeliveryMetadata = {}) {
+    const performedBy = metadata.performedBy ?? courierId;
 
-      // Update parcel status to DELIVERED
-      const updated = await ParcelRepository.updateStatus(
-        parcelId,
-        ParcelStatus.DELIVERED,
-        { deliveredAt: new Date() },
+    return prisma.$transaction(async (tx) => {
+      const parcel = await tx.parcel.findUnique({ where: { id: parcelId } });
+      if (!parcel) {
+        throw new NotFoundException('Parcel', parcelId);
+      }
+      if (parcel.courierId !== courierId) {
+        throw new ForbiddenException('You cannot update a parcel that is not assigned to you');
+      }
+
+      const deliveredAt = new Date();
+      const { count } = await tx.parcel.updateMany({
+        where: { id: parcelId, courierId, status: ParcelStatus.OUT_FOR_DELIVERY },
+        data: { status: ParcelStatus.DELIVERED, deliveredAt },
+      });
+      if (count === 0) {
+        throw new ConflictException(
+          `Parcel ${parcel.trackingId} is not OUT_FOR_DELIVERY (it may already have been delivered)`,
+        );
+      }
+
+      // Parcels assigned before this feature have no snapshot — compute and persist once.
+      let commission: Decimal;
+      if (parcel.courierCommission !== null) {
+        commission = new Decimal(parcel.courierCommission.toString());
+      } else {
+        commission = this.calculateCommission(parcel);
+        await tx.parcel.update({
+          where: { id: parcelId },
+          data: { courierCommission: commission.toFixed(2) },
+        });
+      }
+      const codAmount = new Decimal(parcel.codAmount.toString());
+
+      // Wallet BEFORE ledger: first-time wallet provisioning reads the ledger's
+      // existing cash-in-hand as the opening balance.
+      const wallet = await CourierWalletService.recordDelivery(
+        { courierUserId: courierId, parcelId, commission, codAmount },
         tx,
       );
 
-      // Record financial entries (double-entry + balance updates)
-      await LedgerService.recordDelivery(parcel, userId, tx);
+      await LedgerService.recordDelivery(parcel, performedBy, tx);
+      await LedgerService.recordCourierCommission(parcel, commission, performedBy, tx);
 
-      // Audit: status change
       await AuditService.log({
-        userId,
+        userId: performedBy,
         entity: 'Parcel',
         entityId: parcelId,
         action: AuditAction.STATUS_CHANGE,
-        previousValue: { status: previousStatus },
-        newValue: { status: ParcelStatus.DELIVERED },
+        previousValue: { status: parcel.status },
+        newValue: {
+          status: ParcelStatus.DELIVERED,
+          deliveredAt: deliveredAt.toISOString(),
+          courierCommission: commission.toFixed(2),
+          codCollected: codAmount.toFixed(2),
+          walletId: wallet.id,
+          ...(metadata.note && { note: metadata.note }),
+        },
       }, tx);
 
-      return updated;
+      return tx.parcel.findUniqueOrThrow({ where: { id: parcelId } });
+    });
+  }
+
+  private static calculateCommission(parcel: Pick<Parcel, 'serviceTier' | 'codAmount' | 'weight'>): Decimal {
+    return CommissionService.calculate({
+      serviceTier: parcel.serviceTier,
+      codAmount: parcel.codAmount.toString(),
+      weight: parcel.weight?.toString() ?? null,
     });
   }
 

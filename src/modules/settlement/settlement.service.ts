@@ -26,6 +26,7 @@ import Decimal from 'decimal.js';
 import { prisma } from '../../config/prisma.js';
 import { SettlementRepository } from './settlement.repository.js';
 import { AuditService } from '../audit/audit.service.js';
+import { CourierWalletService } from '../courier-wallet/courier-wallet.service.js';
 import { AccountOwnerType, AccountType, AuditAction } from '../../shared/enums.js';
 import {
   NotFoundException,
@@ -141,6 +142,11 @@ export class SettlementService {
           },
         });
       }
+
+      // ─── Courier wallet: cash-in-hand ↓ (CASH_DEPOSITED) ────
+      // Must run BEFORE the ledger decrement: if the wallet is provisioned here
+      // for the first time, its opening balance is read from the ledger.
+      await CourierWalletService.recordCashDeposit(settlement.courierId, amount, settlementId, tx);
 
       // ─── Create journal entry ────────────────────────────
       // Cash moves from courier to hub

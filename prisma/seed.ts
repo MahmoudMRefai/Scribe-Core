@@ -45,7 +45,22 @@ const DEMO_USERS: DemoUser[] = [
 async function seedDemoUser(demo: DemoUser) {
   const existing = await prisma.user.findUnique({ where: { email: demo.email } });
   if (existing) {
-    console.log(`✅ Demo ${demo.role.toLowerCase()} already exists: ${demo.email}`);
+    const existingAccount = await prisma.ledgerAccount.findFirst({
+      where: { ownerId: existing.id, ownerType: demo.role, type: 'ASSET' },
+    });
+    if (!existingAccount) {
+      await prisma.ledgerAccount.create({
+        data: {
+          ownerId: existing.id,
+          ownerType: demo.role,
+          type: 'ASSET',
+          name: `${demo.role} Wallet — ${demo.name}`,
+        },
+      });
+      console.log(`✅ Provisioned missing wallet for existing demo ${demo.role.toLowerCase()}: ${demo.email}`);
+    } else {
+      console.log(`✅ Demo ${demo.role.toLowerCase()} already exists: ${demo.email}`);
+    }
     return;
   }
 

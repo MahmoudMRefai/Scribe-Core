@@ -3,6 +3,7 @@ import { z } from 'zod';
 export const createParcelSchema = z.object({
   merchantId: z.string().uuid('Invalid merchant ID'),
   codAmount: z.number().min(0, 'COD amount must be non-negative'),
+  serviceTier: z.enum(['LOCAL', 'INTERCITY', 'EXPRESS']).default('LOCAL'),
   weight: z.number().min(0).optional(),
   recipientName: z.string().min(1, 'Recipient name is required'),
   recipientPhone: z.string().min(8, 'Recipient phone is required'),
@@ -15,6 +16,7 @@ export const updateParcelStatusSchema = z.object({
     'PENDING', 'PICKED_UP', 'AT_HUB', 'OUT_FOR_DELIVERY',
     'DELIVERED', 'FAILED', 'RETURNED_TO_ORIGIN',
   ]),
+  deliveryNote: z.string().trim().max(500).optional(),
 });
 
 export const assignCourierSchema = z.object({

@@ -21,6 +21,12 @@
  *   - Unbalanced journal → Error (sum ≠ 0)
  *   - Missing accounts → NotFoundException
  *   - COD amount = 0 → Still record the delivery, just no financial movement
+ *
+ * ─── recordCourierCommission ──────────────────────────────────
+ *   Hub owes the courier their per-parcel commission:
+ *   1. DEBIT  system commission expense   +commission
+ *   2. CREDIT courier commission payable  -commission  (LIABILITY)
+ *   Recorded even when COD = 0 (prepaid parcels still pay the courier).
  */
 import { Prisma, Parcel } from '@prisma/client';
 import Decimal from 'decimal.js';
@@ -30,6 +36,92 @@ import { AuditService } from '../audit/audit.service.js';
 import { NotFoundException } from '../../shared/errors.js';
 
 export class LedgerService {
+  /**
+   * Record the commission the hub owes a courier for a delivered parcel.
+   *
+   * Must be called inside the same Prisma interactive transaction as the delivery.
+   */
+  static async recordCourierCommission(
+    parcel: Parcel,
+    commission: Decimal,
+    userId: string,
+    tx: Prisma.TransactionClient,
+  ): Promise<void> {
+    if (commission.isZero()) return;
+
+    const courierUser = await tx.user.findUnique({ where: { id: parcel.courierId! } });
+    if (!courierUser) {
+      throw new NotFoundException('Courier', parcel.courierId!);
+    }
+
+    const payable = await this.findOrCreateAccount(tx, {
+      ownerId: courierUser.id,
+      ownerType: AccountOwnerType.COURIER,
+      type: AccountType.LIABILITY,
+      name: `COURIER Commission Payable — ${courierUser.name}`,
+    });
+
+    let expense = await tx.ledgerAccount.findFirst({
+      where: { ownerType: AccountOwnerType.SYSTEM, type: AccountType.EXPENSE },
+    });
+    if (!expense) {
+      const admin = await tx.user.findFirst({ where: { role: 'ADMIN' } });
+      if (!admin) throw new NotFoundException('System admin for expense account');
+      expense = await this.findOrCreateAccount(tx, {
+        ownerId: admin.id,
+        ownerType: AccountOwnerType.SYSTEM,
+        type: AccountType.EXPENSE,
+        name: 'Courier Commission Expense',
+      });
+    }
+
+    const amount = commission.toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+
+    // Sum check: +amount + (-amount) = 0 ✓
+    const entry = await tx.journalEntry.create({
+      data: {
+        description: `Courier commission for parcel ${parcel.trackingId} — ${amount.toFixed(2)} EGP (${parcel.serviceTier})`,
+        createdById: userId,
+        lines: {
+          create: [
+            { accountId: expense.id, amount: amount.toFixed(2) },
+            { accountId: payable.id, amount: amount.negated().toFixed(2) },
+          ],
+        },
+      },
+    });
+
+    // Balances are stored as natural-sign magnitudes (same convention as recordDelivery).
+    const oldPayable = new Decimal(payable.balance.toString());
+    await tx.ledgerAccount.update({
+      where: { id: payable.id },
+      data: { balance: { increment: amount.toFixed(2) } },
+    });
+    await tx.ledgerAccount.update({
+      where: { id: expense.id },
+      data: { balance: { increment: amount.toFixed(2) } },
+    });
+
+    await AuditService.log({
+      userId,
+      entity: 'LedgerAccount',
+      entityId: payable.id,
+      action: AuditAction.BALANCE_CHANGE,
+      previousValue: { balance: oldPayable.toFixed(2) },
+      newValue: { balance: oldPayable.plus(amount).toFixed(2), journalEntryId: entry.id, parcelId: parcel.id },
+    }, tx);
+  }
+
+  private static async findOrCreateAccount(
+    tx: Prisma.TransactionClient,
+    key: { ownerId: string; ownerType: AccountOwnerType; type: AccountType; name: string },
+  ) {
+    const { name, ...where } = key;
+    const existing = await tx.ledgerAccount.findFirst({ where });
+    if (existing) return existing;
+    return tx.ledgerAccount.create({ data: { ...where, name } });
+  }
+
   /**
    * Record the financial impact of a delivered parcel.
    *
@@ -46,11 +138,22 @@ export class LedgerService {
     if (codAmount.isZero()) return;
 
     // ─── Find accounts ───────────────────────────────────────
-    const courierAccount = await tx.ledgerAccount.findFirst({
+    let courierAccount = await tx.ledgerAccount.findFirst({
       where: { ownerId: parcel.courierId!, ownerType: AccountOwnerType.COURIER, type: AccountType.ASSET },
     });
     if (!courierAccount) {
-      throw new NotFoundException('Courier account', parcel.courierId!);
+      const courierUser = await tx.user.findUnique({ where: { id: parcel.courierId! } });
+      if (!courierUser) {
+        throw new NotFoundException('Courier account', parcel.courierId!);
+      }
+      courierAccount = await tx.ledgerAccount.create({
+        data: {
+          ownerId: courierUser.id,
+          ownerType: AccountOwnerType.COURIER,
+          type: AccountType.ASSET,
+          name: `COURIER Wallet — ${courierUser.name}`,
+        },
+      });
     }
 
     // Find the merchant's user ID through the merchant record
@@ -58,11 +161,19 @@ export class LedgerService {
       where: { id: parcel.merchantId },
     });
 
-    const merchantAccount = await tx.ledgerAccount.findFirst({
+    let merchantAccount = await tx.ledgerAccount.findFirst({
       where: { ownerId: merchant.userId, ownerType: AccountOwnerType.MERCHANT, type: AccountType.ASSET },
     });
     if (!merchantAccount) {
-      throw new NotFoundException('Merchant account', merchant.userId);
+      const merchantUser = await tx.user.findUnique({ where: { id: merchant.userId } });
+      merchantAccount = await tx.ledgerAccount.create({
+        data: {
+          ownerId: merchant.userId,
+          ownerType: AccountOwnerType.MERCHANT,
+          type: AccountType.ASSET,
+          name: `MERCHANT Wallet — ${merchantUser?.name || merchant.businessName}`,
+        },
+      });
     }
 
     // System revenue account — create if not exists (singleton)
