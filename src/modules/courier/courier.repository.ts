@@ -27,6 +27,10 @@ export class CourierRepository {
   }
 
   static async update(id: string, data: Prisma.CourierUpdateInput) {
-    return prisma.courier.update({ where: { id }, data });
+    return prisma.courier.update({
+      where: { id },
+      data,
+      include: { user: { select: { id: true, email: true, name: true, role: true } } },
+    });
   }
 }

@@ -1,0 +1,10 @@
+node_modules
+dist
+coverage
+.git
+.env
+*.log
+Scribe_Logo*.png
+postman
+tests
+

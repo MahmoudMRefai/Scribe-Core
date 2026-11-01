@@ -285,7 +285,7 @@ export class PayoutService {
 
           await tx.ledgerAccount.update({
             where: { id: payable.id },
-            data: { balance: { increment: amount.toNumber() } },
+            data: { balance: { decrement: amount.toNumber() } },
           });
         }
 

@@ -27,6 +27,10 @@ export class MerchantRepository {
   }
 
   static async update(id: string, data: Prisma.MerchantUpdateInput) {
-    return prisma.merchant.update({ where: { id }, data });
+    return prisma.merchant.update({
+      where: { id },
+      data,
+      include: { user: { select: { id: true, email: true, name: true, role: true } } },
+    });
   }
 }
