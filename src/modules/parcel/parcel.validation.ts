@@ -1,14 +1,19 @@
 import { z } from 'zod';
+import { normalizePhone } from '../../shared/phone.util.js';
 
 export const createParcelSchema = z.object({
   merchantId: z.string().uuid('Invalid merchant ID'),
   codAmount: z.number().min(0, 'COD amount must be non-negative'),
   serviceTier: z.enum(['LOCAL', 'INTERCITY', 'EXPRESS']).default('LOCAL'),
   weight: z.number().min(0).optional(),
-  recipientName: z.string().min(1, 'Recipient name is required'),
-  recipientPhone: z.string().min(8, 'Recipient phone is required'),
-  recipientAddress: z.string().min(5, 'Recipient address is required'),
-  notes: z.string().optional(),
+  recipientName: z.string().trim().min(1, 'Recipient name is required'),
+  recipientPhone: z
+    .string()
+    .trim()
+    .transform((v) => normalizePhone(v))
+    .refine((v) => v.length >= 8, 'Recipient phone is required'),
+  recipientAddress: z.string().trim().min(5, 'Recipient address is required'),
+  notes: z.string().trim().optional(),
 });
 
 export const updateParcelStatusSchema = z.object({

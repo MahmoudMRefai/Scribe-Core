@@ -7,10 +7,19 @@
 
 const EGYPTIAN_MOBILE_E164 = /^\+201[0125]\d{8}$/;
 
+/**
+ * Convert Arabic-Indic (٠-٩) and Extended Arabic-Indic (۰-۹) digits to ASCII (0-9).
+ */
+export function toAsciiDigits(input: string): string {
+  return input
+    .replace(/[\u0660-\u0669]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+    .replace(/[\u06F0-\u06F9]/g, (d) => String(d.charCodeAt(0) - 0x06f0));
+}
+
 /** Normalize an Egyptian phone number to E.164 (+20...). Unknown formats are returned cleaned. */
 export function normalizePhone(phone: string): string {
-  // Remove all non-digit characters except +
-  const cleaned = phone.replace(/[^\d+]/g, '');
+  // Convert any Arabic digits first, then remove all non-digit characters except +
+  const cleaned = toAsciiDigits(phone).replace(/[^\d+]/g, '');
 
   // Local format: 010..., 011..., 012..., 015... (11 digits)
   if (cleaned.startsWith('0') && cleaned.length === 11) {

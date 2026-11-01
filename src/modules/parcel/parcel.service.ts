@@ -36,6 +36,7 @@ import { CommissionService } from '../commission/commission.service.js';
 import { CourierWalletService } from '../courier-wallet/courier-wallet.service.js';
 import { AuditService } from '../audit/audit.service.js';
 import { AuditAction } from '../../shared/enums.js';
+import { normalizePhone } from '../../shared/phone.util.js';
 import {
   NotFoundException,
   ConflictException,
@@ -90,10 +91,10 @@ export class ParcelService {
           codAmount: input.codAmount,
           serviceTier: input.serviceTier ?? ServiceTier.LOCAL,
           weight: input.weight,
-          recipientName: input.recipientName,
-          recipientPhone: input.recipientPhone,
-          recipientAddress: input.recipientAddress,
-          notes: input.notes,
+          recipientName: input.recipientName.trim(),
+          recipientPhone: normalizePhone(input.recipientPhone),
+          recipientAddress: input.recipientAddress.trim(),
+          notes: input.notes?.trim() || undefined,
           status: ParcelStatus.PENDING,
         },
         tx,

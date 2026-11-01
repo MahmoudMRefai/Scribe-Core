@@ -82,6 +82,16 @@ export class MerchantService {
       };
     }
 
-    return MerchantRepository.update(id, formattedData);
+    const updated = await MerchantRepository.update(id, formattedData);
+
+    const displayOwner = (name ?? updated.user?.name ?? businessName ?? updated.businessName)?.trim();
+    if (displayOwner) {
+      await prisma.ledgerAccount.updateMany({
+        where: { ownerId: merchant.userId, ownerType: 'MERCHANT', type: 'ASSET' },
+        data: { name: `MERCHANT Wallet — ${displayOwner}` },
+      });
+    }
+
+    return updated;
   }
 }

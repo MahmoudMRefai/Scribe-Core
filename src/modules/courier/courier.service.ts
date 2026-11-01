@@ -79,6 +79,22 @@ export class CourierService {
       };
     }
 
-    return CourierRepository.update(id, formattedData);
+    const updated = await CourierRepository.update(id, formattedData);
+
+    if (name !== undefined && name.trim()) {
+      const cleanName = name.trim();
+      await Promise.all([
+        prisma.ledgerAccount.updateMany({
+          where: { ownerId: courier.userId, ownerType: 'COURIER', type: 'ASSET' },
+          data: { name: `COURIER Wallet — ${cleanName}` },
+        }),
+        prisma.ledgerAccount.updateMany({
+          where: { ownerId: courier.userId, ownerType: 'COURIER', type: 'LIABILITY' },
+          data: { name: `COURIER Commission Payable — ${cleanName}` },
+        }),
+      ]);
+    }
+
+    return updated;
   }
 }
